@@ -2,9 +2,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, colorchooser
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 from tkinter import font
-
 import platform
-from PIL import ImageFont
 
 ROOT_HEIGHT = 700
 ROOT_WIDTH = 1000
@@ -69,8 +67,8 @@ def create_preview(pil):
         resample=Image.Resampling.LANCZOS,
     )
     # Store the actual preview size for save scaling
-    image_preview_canvas.preview_width = preview_copy.width
-    image_preview_canvas.preview_height = preview_copy.height
+    image_preview_canvas.preview_width = preview_copy.width  # type: ignore[attr-defined]
+    image_preview_canvas.preview_height = preview_copy.height  # type: ignore[attr-defined]
     return preview_copy
 
 
@@ -111,6 +109,15 @@ def image_open():
         )
 
 
+def upload_logo():
+    logo_path = filedialog.askopenfilename(
+        title="Select Logo", filetypes=[("PNG", "*.png"), ("All Images", "*.*")]
+    )
+    if logo_path:
+        image_preview_canvas.logo_path = logo_path  # type: ignore[attr-defined]
+        create_logo(logo_path)
+
+
 def bbox_dims(font, text):
     bbox = font.getbbox(text)
     text_width = int((bbox[2] - bbox[0]) * 1.0)
@@ -137,36 +144,29 @@ def create_text():
 
     try:
         font_size = int(watermark_text_size.get())
-    except:
+    except ValueError:
         font_size = 36
 
     font = get_default_font(font_size)
     text_width, text_height, padding = bbox_dims(font, new_text)
-    image_preview_canvas.text_width, image_preview_canvas.text_height = (
-        text_width,
-        text_height,
-    )
+
     img = Image.new(
         "RGBA", (text_width + padding * 2, text_height + padding * 2), (0, 0, 0, 0)
     )
     draw = ImageDraw.Draw(img)
     text_x, text_y = text_draw_dims(img, text_width, text_height)
+
     r, g, b = getattr(image_preview_canvas, "watermark_rgb", (255, 255, 255))
 
     try:
         alpha = int(opacity_slider.get())
-    except:
+    except ValueError:
         alpha = 255
 
     fill_color = (r, g, b, alpha)
 
-    draw.text(
-        (text_x, text_y),
-        new_text,
-        font=font,
-        fill=fill_color,
-        anchor="lt",
-    )  # type: ignore[attr-defined]
+    draw.text((text_x, text_y), new_text, font=font, fill=fill_color, anchor="lt")
+
     photo = ImageTk.PhotoImage(img)
 
     if hasattr(canvas, "watermark_image_id") and canvas.watermark_image_id:  # type: ignore[attr-defined]
@@ -185,6 +185,42 @@ def create_text():
     canvas.watermark_photo = photo  # type: ignore[attr-defined]
 
 
+def create_logo(logo_path=None):
+    canvas = image_preview_canvas
+
+    if logo_path is None:
+        if not hasattr(canvas, "logo_path"):
+            return
+        logo_path = canvas.logo_path  # type: ignore[attr-defined]
+
+    # ... rest of your logo rendering code ...
+    try:
+        logo_img = Image.open(logo_path).convert("RGBA")
+        try:
+            logo_size = int(logo_size_slider.get())
+        except ValueError:
+            logo_size = 200
+        logo_img.thumbnail((logo_size, logo_size), Image.Resampling.LANCZOS)
+        photo = ImageTk.PhotoImage(logo_img)
+
+        if hasattr(canvas, "logo_image_id") and canvas.logo_image_id:  # type: ignore[attr-defined]
+            canvas.itemconfigure(canvas.logo_image_id, image=photo, state="normal")  # type: ignore[attr-defined]
+        else:
+            item_id = canvas.create_image(
+                canvas.winfo_width() // 2,
+                canvas.winfo_height() // 2,
+                image=photo,
+                anchor="center",
+                tags=("draggable", "logo"),
+            )
+            canvas.logo_image_id = item_id  # type: ignore[attr-defined]
+            canvas.tag_raise(item_id)
+
+        canvas.logo_photo = photo  # type: ignore[attr-defined]
+    except Exception as e:
+        messagebox.showerror("Logo Error", f"Failed to load logo:\n{e}")
+
+
 def save_image_with_watermark():
     if not hasattr(image_preview_canvas, "original_pil"):
         messagebox.showinfo("No Image", "Load an image first.")
@@ -197,44 +233,68 @@ def save_image_with_watermark():
     if not save_path:
         return
 
-    full_img = image_preview_canvas.original_pil.copy()
+    full_img = image_preview_canvas.original_pil.copy()  # type: ignore[attr-defined]
     canvas = image_preview_canvas
 
+    preview_w = canvas.keep_alive_photo.width()  # type: ignore[attr-defined]
+    preview_h = canvas.keep_alive_photo.height()  # type: ignore[attr-defined]
+    scale_x = full_img.width / preview_w
+    scale_y = full_img.height / preview_h
+
     new_text = watermark_textbox.get().strip()
-    if new_text and canvas.watermark_image_id:
-        # Get main preview image bounds (letterbox)
-        main_x1, main_y1, main_x2, main_y2 = canvas.bbox(canvas.image_id)
+    if new_text and hasattr(canvas, "watermark_image_id") and canvas.watermark_image_id:  # type: ignore[attr-defined]
+        main_x1, main_y1, main_x2, main_y2 = canvas.bbox(canvas.image_id)  # type: ignore[attr-defined]
 
-        # Get watermark position relative to preview image (subtract letterbox offset)
-        relative_x = canvas.wm_x_display - main_x1
-        relative_y = canvas.wm_y_display - main_y1
-
-        # Scale factors (using stored preview image size)
-        preview_w = canvas.preview_width
-        preview_h = canvas.preview_height
-
-        scale_x = full_img.width / preview_w
-        scale_y = full_img.height / preview_h
+        relative_x = canvas.text_x_display - main_x1  # type: ignore[attr-defined]
+        relative_y = canvas.text_y_display - main_y1  # type: ignore[attr-defined]
 
         full_x = relative_x * scale_x
         full_y = relative_y * scale_y
 
-        # Font size (scaled)
         try:
             preview_font_size = int(watermark_text_size.get())
-        except:
+        except ValueError:
             preview_font_size = 36
         full_font_size = int(preview_font_size * scale_x)
         font = get_default_font(full_font_size)
 
-        # Color and opacity
-        r, g, b = canvas.watermark_rgb
+        r, g, b = canvas.watermark_rgb  # type: ignore[attr-defined]
         alpha = int(opacity_slider.get())
         fill = (r, g, b, alpha)
 
-        # Draw
         draw = ImageDraw.Draw(full_img)
         draw.text((full_x, full_y), new_text, font=font, fill=fill, anchor="mm")
+
+    if (
+        hasattr(canvas, "logo_image_id")
+        and canvas.logo_image_id  # type: ignore[attr-defined]
+        and hasattr(canvas, "logo_path")
+    ):
+        try:
+            logo_pil = Image.open(canvas.logo_path).convert("RGBA")  # type: ignore[attr-defined]
+
+            main_x1, main_y1, main_x2, main_y2 = canvas.bbox(canvas.image_id)  # type: ignore[attr-defined]
+
+            relative_x = canvas.logo_x_display - main_x1  # type: ignore[attr-defined]
+            relative_y = canvas.logo_y_display - main_y1  # type: ignore[attr-defined]
+
+            full_x = relative_x * scale_x
+            full_y = relative_y * scale_y
+
+            try:
+                preview_logo_size = int(logo_size_slider.get())
+            except ValueError:
+                preview_logo_size = 200
+            full_logo_size = int(preview_logo_size * scale_x)
+            logo_pil.thumbnail(
+                (full_logo_size, full_logo_size), Image.Resampling.LANCZOS
+            )
+
+            full_x = int(full_x - logo_pil.width // 2)  # center it
+            full_y = int(full_y - logo_pil.height // 2)
+            full_img.paste(logo_pil, (full_x, full_y), logo_pil)
+        except Exception as e:
+            print(f"Logo save error: {e}")
 
     full_img.save(save_path)
     messagebox.showinfo("Success", f"Saved:\n{save_path}")
@@ -293,8 +353,14 @@ def drag_motion(event):
     canvas.move(drag_id, dx, dy)
 
     current_x, current_y = canvas.coords(drag_id)
-    canvas.wm_x_display = current_x
-    canvas.wm_y_display = current_y
+
+    tags = canvas.gettags(drag_id)
+    if "watermark" in tags:
+        canvas.text_x_display = current_x  # type: ignore[attr-defined]
+        canvas.text_y_display = current_y  # type: ignore[attr-defined]
+    elif "logo" in tags:
+        canvas.logo_x_display = current_x  # type: ignore[attr-defined]
+        canvas.logo_y_display = current_y  # type: ignore[attr-defined]
 
 
 def stop_drag(event):
@@ -307,10 +373,13 @@ def stop_drag(event):
 
 
 def field_status():
-    if hasattr(image_preview_canvas, "image_id") and image_preview_canvas.image_id:  # type: ignore[attr-defined]
-        watermark_textbox.config(state="normal")
-    else:
-        watermark_textbox.config(state="disabled")
+    has_image = (
+        hasattr(image_preview_canvas, "image_id") and image_preview_canvas.image_id  # type: ignore[attr-defined]
+    )  # type: ignore[attr-defined]
+    state = "normal" if has_image else "disabled"
+    watermark_textbox.config(state=state)
+    watermark_text_size.config(state=state)
+    if not has_image:
         watermark_textbox.delete(0, tk.END)
 
 
@@ -426,9 +495,31 @@ opacity_slider.configure(
     from_=0,
     to=255,
 )
-opacity_slider.set(255)  # Default fully opaque
+opacity_slider.set(255)
 opacity_slider.grid(row=8, column=0, sticky="ew")
-opacity_slider.bind("<Motion>", lambda e: create_text())  # Live update
+opacity_slider.bind("<Motion>", lambda e: create_text())
+
+logo_button = tk.Button(tree, text="Upload Logo", command=upload_logo)
+logo_button.grid(row=9, column=0, pady=10)
+
+logo_size_label = tk.Label(tree, text="Logo Sixe Scaler")
+logo_size_label.grid(row=10, column=0, sticky="ew", pady=(10, 0))
+logo_size_label.configure(anchor="center", bg="#222222", foreground="white")
+
+logo_size_slider = tk.Scale(tree)
+logo_size_slider.configure(
+    orient="horizontal",
+    background="#555555",
+    foreground="white",
+    relief="flat",
+    borderwidth=0,
+    highlightthickness=0,
+    from_=50,
+    to=400,
+)
+logo_size_slider.set(200)
+logo_size_slider.grid(row=11, column=0, sticky="ew")
+logo_size_slider.bind("<Motion>", lambda e: create_logo())
 
 save_button = tk.Button(tree, text="Save Image", command=save_image_with_watermark)
 save_button.configure(
@@ -440,12 +531,12 @@ save_button.configure(
     activeforeground="white",
     highlightthickness=0,
 )
-save_button.grid(row=9, column=0, pady=10, sticky="ew")
+save_button.grid(row=12, column=0, pady=10, sticky="ew")
 
-tree.grid_rowconfigure(10, weight=1)
+tree.grid_rowconfigure(13, weight=1)
 
 exit_button = tk.Button(tree, text="Exit Tool", command=root.destroy)
-exit_button.grid(row=11, column=0, sticky="s", pady=(10, 0))
+exit_button.grid(row=14, column=0, sticky="s", pady=(10, 0))
 exit_button.configure(
     anchor="center",
     bg="#555555",
@@ -486,8 +577,13 @@ image_preview_canvas.watermark_color = "#ffffff"  # type: ignore[attr-defined]
 
 image_preview_canvas.watermark_image_id = None  # type: ignore[attr-defined]
 image_preview_canvas.watermark_photo = None  # type: ignore[attr-defined]
-image_preview_canvas.wm_x_display = 0
-image_preview_canvas.wm_y_display = 0
+image_preview_canvas.text_x_display = 0  # type: ignore[attr-defined]
+image_preview_canvas.text_x_display = image_preview_canvas.winfo_width() // 2  # type: ignore[attr-defined]
+image_preview_canvas.text_y_display = image_preview_canvas.winfo_height() // 2  # type: ignore[attr-defined]
+image_preview_canvas.logo_x_display = image_preview_canvas.winfo_width() // 2  # type: ignore[attr-defined]
+image_preview_canvas.logo_y_display = image_preview_canvas.winfo_height() // 2  # type: ignore[attr-defined]
+image_preview_canvas.logo_image_id = None  # type: ignore[attr-defined]
+image_preview_canvas.logo_photo = None  # type: ignore[attr-defined]
 
 image_preview_canvas.bind("<Configure>", lambda e: center_image())
 image_preview_canvas.bind("<Button-1>", lambda e: click(e))
